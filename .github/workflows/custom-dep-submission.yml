@@ -17,6 +17,7 @@ permissions:
 
 jobs:
   dependency-detection:
+    permissions: write-all
     name: Universal Dependency Detection
     runs-on: ubuntu-latest
     
