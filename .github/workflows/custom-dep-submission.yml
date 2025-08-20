@@ -1,0 +1,246 @@
+name: Component Detection Dependency Submission
+
+on:
+  push:
+    branches: [ 'main', 'master', 'develop' ]
+  pull_request:
+    branches: [ 'main', 'master' ]
+  schedule:
+    - cron: '0 6 * * 1'  # Weekly on Mondays at 6 AM UTC
+  workflow_dispatch:     # Allow manual triggers
+
+permissions:
+  contents: read
+  actions: read
+  security-events: write
+  id-token: write  # Required for component-detection action
+
+jobs:
+  dependency-detection:
+    name: Universal Dependency Detection
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Run Microsoft Component Detection
+        id: component-detection
+        uses: advanced-security/component-detection-dependency-submission-action@v0.0.3
+        with:
+          # Scan entire repository
+          filePath: '.'
+          
+          # Exclude common directories that don't contain dependencies
+          directoryExclusionList: 'node_modules,__pycache__,.git,.github,test,tests,spec,dist,build,target,.pytest_cache,.coverage,htmlcov,*.egg-info'
+          
+          # Enable beta detectors for better coverage (including Python)
+          detectorArgs: 'Pip=EnableIfDefaultOff,Poetry=EnableIfDefaultOff,Go=EnableIfDefaultOff'
+          
+          # Optional: Use a custom correlator for this workflow
+          correlator: 'component-detection-universal'
+      
+      - name: Detection Summary
+        if: always()
+        run: |
+          echo "## 🔍 Universal Component Detection Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [[ "${{ steps.component-detection.outcome }}" == "success" ]]; then
+            echo "✅ **Component Detection Completed Successfully**" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### What was detected:" >> $GITHUB_STEP_SUMMARY
+            echo "- **Multi-ecosystem scanning** completed across the entire repository" >> $GITHUB_STEP_SUMMARY
+            echo "- **Dependencies submitted** to GitHub dependency graph automatically" >> $GITHUB_STEP_SUMMARY
+            echo "- **Supported ecosystems**: Python (pip, pipenv, poetry), Node.js (npm, yarn, pnpm), Java (Maven, Gradle), C# (NuGet), Go, Rust, Ruby, PHP, and more" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Benefits:" >> $GITHUB_STEP_SUMMARY
+            echo "- 🛡️ **Enhanced Dependabot alerts** with more accurate dependency information" >> $GITHUB_STEP_SUMMARY
+            echo "- 🔍 **Comprehensive detection** using Microsoft's battle-tested algorithms" >> $GITHUB_STEP_SUMMARY
+            echo "- 📊 **Better dependency insights** in your repository's dependency graph" >> $GITHUB_STEP_SUMMARY
+            echo "- 🚀 **Zero configuration** for most package managers and ecosystems" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ **Component Detection Failed**" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "The component detection process encountered an error. Please check the logs above for details." >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📊 View Results" >> $GITHUB_STEP_SUMMARY
+          echo "Navigate to your repository's **Insights → Dependency graph** to view the detected dependencies." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔧 Configuration Used" >> $GITHUB_STEP_SUMMARY
+          echo "- **Scan Path**: Entire repository (\`.\")" >> $GITHUB_STEP_SUMMARY
+          echo "- **Excluded Directories**: Common build/test directories" >> $GITHUB_STEP_SUMMARY
+          echo "- **Beta Detectors**: Enabled for Pip, Poetry, and Go" >> $GITHUB_STEP_SUMMARY
+          echo "- **Correlator**: \`component-detection-universal\`" >> $GITHUB_STEP_SUMMARY
+
+  # Optional: Container scanning job if Docker files are present
+  container-detection:
+    name: Container Dependency Detection
+    runs-on: ubuntu-latest
+    needs: dependency-detection
+    if: always()
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Check for Docker files
+        id: check-docker
+        run: |
+          echo "🔍 Checking for Docker files..."
+          
+          DOCKER_FILES=()
+          while IFS= read -r -d '' file; do
+            DOCKER_FILES+=("$file")
+            echo "Found Docker file: $file"
+          done < <(find . -name "Dockerfile*" -o -name "*.dockerfile" -type f -print0 2>/dev/null)
+          
+          if [[ ${#DOCKER_FILES[@]} -gt 0 ]]; then
+            echo "has-docker=true" >> $GITHUB_OUTPUT
+            echo "docker-files=${#DOCKER_FILES[@]}" >> $GITHUB_OUTPUT
+            echo "✅ Found ${#DOCKER_FILES[@]} Docker file(s) for container analysis"
+          else
+            echo "has-docker=false" >> $GITHUB_OUTPUT
+            echo "docker-files=0" >> $GITHUB_OUTPUT
+            echo "ℹ️ No Docker files found - skipping container analysis"
+          fi
+      
+      - name: Build Docker image for analysis
+        if: steps.check-docker.outputs.has-docker == 'true'
+        id: build-image
+        run: |
+          echo "🐳 Building Docker image for dependency analysis..."
+          
+          # Try to build the main Dockerfile
+          if [[ -f "Dockerfile" ]]; then
+            IMAGE_NAME="dependency-analysis:$(date +%s)"
+            echo "Building image: $IMAGE_NAME"
+            
+            if docker build -t "$IMAGE_NAME" .; then
+              echo "✅ Successfully built Docker image: $IMAGE_NAME"
+              echo "docker-image=$IMAGE_NAME" >> $GITHUB_OUTPUT
+              echo "build-success=true" >> $GITHUB_OUTPUT
+            else
+              echo "❌ Failed to build Docker image"
+              echo "build-success=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "⚠️ No standard Dockerfile found for building"
+            echo "build-success=false" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Run Container Component Detection
+        if: steps.build-image.outputs.build-success == 'true'
+        uses: advanced-security/component-detection-dependency-submission-action@v0.0.3
+        with:
+          # Scan the built Docker image
+          dockerImagesToScan: ${{ steps.build-image.outputs.docker-image }}
+          
+          # Use a different correlator for container analysis
+          correlator: 'component-detection-container'
+          
+          # Exclude directories (not as relevant for container scanning)
+          directoryExclusionList: '.git,.github'
+      
+      - name: Container Detection Summary
+        if: always()
+        run: |
+          echo "## 🐳 Container Dependency Detection Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [[ "${{ steps.check-docker.outputs.has-docker }}" == "true" ]]; then
+            echo "**Docker Files Found**: ${{ steps.check-docker.outputs.docker-files }}" >> $GITHUB_STEP_SUMMARY
+            
+            if [[ "${{ steps.build-image.outputs.build-success }}" == "true" ]]; then
+              echo "✅ **Container Analysis**: Successfully analyzed Docker image dependencies" >> $GITHUB_STEP_SUMMARY
+              echo "- **Image**: \`${{ steps.build-image.outputs.docker-image }}\`" >> $GITHUB_STEP_SUMMARY
+              echo "- **Dependencies**: Submitted to dependency graph with correlator \`component-detection-container\`" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "❌ **Container Analysis**: Failed to build Docker image for analysis" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "ℹ️ **Container Analysis**: No Docker files detected - skipped container dependency analysis" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📊 Combined Results" >> $GITHUB_STEP_SUMMARY
+          echo "Your dependency graph now includes:" >> $GITHUB_STEP_SUMMARY
+          echo "- **Source code dependencies** (from universal detection)" >> $GITHUB_STEP_SUMMARY
+          if [[ "${{ steps.check-docker.outputs.has-docker }}" == "true" && "${{ steps.build-image.outputs.build-success }}" == "true" ]]; then
+            echo "- **Container dependencies** (from Docker image analysis)" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  # Final summary job
+  analysis-complete:
+    name: Analysis Summary
+    runs-on: ubuntu-latest
+    needs: [dependency-detection, container-detection]
+    if: always()
+    
+    steps:
+      - name: Generate Final Summary
+        run: |
+          echo "# 🎯 Dependency Analysis Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "## 📊 Execution Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Universal detection status
+          if [[ "${{ needs.dependency-detection.result }}" == "success" ]]; then
+            echo "✅ **Universal Detection**: Completed successfully" >> $GITHUB_STEP_SUMMARY
+          elif [[ "${{ needs.dependency-detection.result }}" == "failure" ]]; then
+            echo "❌ **Universal Detection**: Failed" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ **Universal Detection**: ${{ needs.dependency-detection.result }}" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Container detection status
+          if [[ "${{ needs.container-detection.result }}" == "success" ]]; then
+            echo "✅ **Container Detection**: Completed successfully" >> $GITHUB_STEP_SUMMARY
+          elif [[ "${{ needs.container-detection.result }}" == "failure" ]]; then
+            echo "❌ **Container Detection**: Failed" >> $GITHUB_STEP_SUMMARY
+          elif [[ "${{ needs.container-detection.result }}" == "skipped" ]]; then
+            echo "ℹ️ **Container Detection**: Skipped (no Docker files)" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ **Container Detection**: ${{ needs.container-detection.result }}" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 🚀 What This Provides" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔍 **Comprehensive Ecosystem Support**" >> $GITHUB_STEP_SUMMARY
+          echo "Microsoft Component Detection automatically identifies dependencies across:" >> $GITHUB_STEP_SUMMARY
+          echo "- **Python**: pip, pipenv, poetry, setup.py, requirements.txt" >> $GITHUB_STEP_SUMMARY
+          echo "- **JavaScript/Node.js**: npm, yarn, pnpm, package.json" >> $GITHUB_STEP_SUMMARY
+          echo "- **Java**: Maven (pom.xml), Gradle (build.gradle)" >> $GITHUB_STEP_SUMMARY
+          echo "- **C#/.NET**: NuGet packages, PackageReference" >> $GITHUB_STEP_SUMMARY
+          echo "- **Go**: go.mod files" >> $GITHUB_STEP_SUMMARY
+          echo "- **Rust**: Cargo.toml" >> $GITHUB_STEP_SUMMARY
+          echo "- **Ruby**: Gemfile" >> $GITHUB_STEP_SUMMARY
+          echo "- **PHP**: composer.json" >> $GITHUB_STEP_SUMMARY
+          echo "- **And many more ecosystems**" >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🛡️ **Enhanced Security**" >> $GITHUB_STEP_SUMMARY
+          echo "- **Better Dependabot alerts** with more accurate dependency detection" >> $GITHUB_STEP_SUMMARY
+          echo "- **Transitive dependency tracking** for comprehensive vulnerability scanning" >> $GITHUB_STEP_SUMMARY
+          echo "- **Container dependency analysis** for Docker-based applications" >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📈 **Zero Maintenance**" >> $GITHUB_STEP_SUMMARY
+          echo "- **Microsoft maintains** the detection algorithms" >> $GITHUB_STEP_SUMMARY
+          echo "- **Automatic updates** for new package managers and ecosystems" >> $GITHUB_STEP_SUMMARY
+          echo "- **Battle-tested** detection logic used across Microsoft's ecosystem" >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 📊 Next Steps" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "1. **View Dependencies**: Go to **Insights → Dependency graph** in your repository" >> $GITHUB_STEP_SUMMARY
+          echo "2. **Check Alerts**: Review any new Dependabot security alerts" >> $GITHUB_STEP_SUMMARY
+          echo "3. **Monitor Regularly**: This workflow runs automatically on pushes and weekly" >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "*Powered by [Microsoft Component Detection](https://github.com/microsoft/component-detection) 🚀*" >> $GITHUB_STEP_SUMMARY
